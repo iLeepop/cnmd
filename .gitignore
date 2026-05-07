@@ -1,0 +1,7 @@
+/target
+/dist
+*.wasm
+Cargo.lock
+
+# AI Agent
+.cursor

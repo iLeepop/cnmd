@@ -1,0 +1,16 @@
+{
+  "web_accessible_resources": [
+    {
+      "matches": ["<all_urls>"],
+      "resources": ["wasm/*"]
+    }
+  ],
+  "host_permissions": ["file://*/*"],
+  "content_scripts": [
+    {
+      "matches": ["file://*/*"],
+      "js": ["marked.min.js", "purify.min.js", "md_file_inject.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
