@@ -1,4 +1,4 @@
-# Cnmd
+# Catch Nothing Markdown
 
 基于 [Oxichrome](https://crates.io/crates/oxichrome) 与 Leptos 的 Chromium 扩展。打开本地 `file://` 下的 `.md` / `.markdown` 时，**在当前标签页内**替换为可阅读的渲染视图（思路与 [md-reader](https://github.com/md-reader/md-reader) 一致：不单独打开扩展选项页，而是就地改写页面）。
 

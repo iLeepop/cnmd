@@ -17,6 +17,8 @@ import { normalizeDirPath } from "./cnmd-dir-tree";
 import DirectoryPanel from "./fragments/DirectoryPanel.vue";
 import MenuDropdown from "./fragments/MenuDropdown.vue";
 import OpenFilePanel from "./fragments/OpenFilePanel.vue";
+import ThemePanel from "./fragments/ThemePanel.vue";
+import { watchCnmdTheme } from "./useCnmdTheme";
 
 const markdown = defineModel<string>("markdown", { required: true });
 const displayName = defineModel<string>("displayName", { required: true });
@@ -24,6 +26,7 @@ const displayName = defineModel<string>("displayName", { required: true });
 const viewMode = ref<"rendered" | "source">("rendered");
 const menuOpen = ref(false);
 const panelOpen = ref(false);
+const themePanelOpen = ref(false);
 const sidebarHidden = ref(false);
 const resizing = ref(false);
 const sidebarTab = ref<"outline" | "dir">("outline");
@@ -197,6 +200,15 @@ function closePanel() {
   panelOpen.value = false;
 }
 
+function openThemePanel() {
+  menuOpen.value = false;
+  themePanelOpen.value = true;
+}
+
+function closeThemePanel() {
+  themePanelOpen.value = false;
+}
+
 function toggleViewMode() {
   menuOpen.value = false;
   viewMode.value = viewMode.value === "source" ? "rendered" : "source";
@@ -265,7 +277,11 @@ watch(sidebarTab, (v) => {
   localStorage.setItem("cnmd_sidebar_tab", v);
 });
 
+let stopThemeWatch: (() => void) | undefined;
+
 onMounted(() => {
+  stopThemeWatch = watchCnmdTheme();
+
   const stored = parseInt(localStorage.getItem("cnmd_sb_w") ?? "", 10);
   if (!Number.isNaN(stored)) {
     document.documentElement.style.setProperty(
@@ -288,6 +304,7 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  stopThemeWatch?.();
   window.removeEventListener("scroll", onScroll);
   document.body.classList.remove("cnmd-body-source");
 });
@@ -313,6 +330,7 @@ onUnmounted(() => {
         :src-label="srcToggleLabel"
         @close="menuOpen = false"
         @open-file="openFilePanel"
+        @open-theme="openThemePanel"
         @toggle-source="toggleViewMode"
       />
     </div>
@@ -322,6 +340,13 @@ onUnmounted(() => {
       style="display: block"
     >
       <OpenFilePanel @close="closePanel" @loaded="onFileLoaded" />
+    </div>
+    <div
+      v-show="themePanelOpen"
+      id="cnmd-theme-layer"
+      style="display: block"
+    >
+      <ThemePanel @close="closeThemePanel" />
     </div>
     <pre id="cnmd-source-plain">{{ markdown }}</pre>
   </template>
@@ -354,6 +379,7 @@ onUnmounted(() => {
         :src-label="srcToggleLabel"
         @close="menuOpen = false"
         @open-file="openFilePanel"
+        @open-theme="openThemePanel"
         @toggle-source="toggleViewMode"
       />
     </div>
@@ -363,6 +389,13 @@ onUnmounted(() => {
       style="display: block"
     >
       <OpenFilePanel @close="closePanel" @loaded="onFileLoaded" />
+    </div>
+    <div
+      v-show="themePanelOpen"
+      id="cnmd-theme-layer"
+      style="display: block"
+    >
+      <ThemePanel @close="closeThemePanel" />
     </div>
 
     <aside class="cnmd-sidebar" id="cnmd-sidebar" aria-label="大纲侧栏">
