@@ -9,7 +9,7 @@
   "content_scripts": [
     {
       "matches": ["file://*/*"],
-      "js": ["marked.min.js", "purify.min.js", "md_file_inject.js"],
+      "js": ["cnmd_viewer.js"],
       "run_at": "document_idle"
     }
   ]
