@@ -52,6 +52,10 @@ bash ./scripts/unix/patch-background-dir-fetch.sh
 - 用 Chrome **直接打开**本地 Markdown 文件（地址栏为 `file:///.../xxx.md`），页面会自动变为带右上角菜单的阅读视图。
 - 左侧 **大纲**：贴窗口左缘、与视口同高；与正文之间无空隙，中间 **竖条分隔** 可左右拖拽调整侧栏宽度（宽度会记入 `localStorage`）。有标题时按 `h1`–`h6` 列出并可点击跳转；无标题时按正文顶层块生成导航；滚动时高亮当前节。
 - 菜单：**打开文件**（本页重新选择/拖拽文件）、**显示原文** / **显示预览**（原文为未渲染的纯文本）。
+- 侧栏 **编辑**：进入编辑模式后默认在**渲染**子模式中直接修改预览内容（实时同步为 Markdown）；主内容区右下角 **源代码** 按钮可在「渲染 / 源代码」之间切换。再次点击编辑退出。编辑时右上角会显示淡灰色「编辑模式」提示。
+- **快捷键**（编辑模式中）：`⌘S` / `Ctrl+S` 保存，`⌘Z` / `Ctrl+Z` 撤销（渲染模式由浏览器处理，源代码模式由文本框处理）。
+- 渲染编辑经 HTML↔Markdown 转换，复杂语法（嵌套列表、表格等）可能与原文略有差异；精确修改请用源代码子模式。
+- **保存到原文件**：仅当通过 `file://` 直接打开本地 `.md` 时可用。首次保存会弹出文件选择器，请选择**正在编辑的同一个文件**以授权写入；之后同一路径可一键保存。通过菜单「打开文件」载入的文档无法写回原路径。
 
 若系统将 `.md` 设为下载而非在标签页打开，扩展无法生效。
 
@@ -59,6 +63,7 @@ bash ./scripts/unix/patch-background-dir-fetch.sh
 
 - [`static/md_viewer.css`](static/md_viewer.css)：阅读页样式源文件；由 Vue 扩展构建通过 `?raw` 打进 `cnmd_viewer.js`。**修改样式后请在 `vue-md-viewer` 目录执行 `npm run build:extension`**（或使用 `./scripts/unix/build.sh` / `scripts\windows\build.bat`）。
 - [`static/cnmd_viewer.js`](static/cnmd_viewer.js)：由 `vue-md-viewer` 产出（勿手改）；构建命令见上。
+- [`static/cnmd-offscreen.html`](static/cnmd-offscreen.html)、[`static/cnmd-offscreen-save.js`](static/cnmd-offscreen-save.js)：扩展 offscreen 页，用于 File System Access API 写回本地文件。
 - [`vue-md-viewer/`](vue-md-viewer/)：阅读器源码；本地调试：`npm install && npm run dev`。
 
 ## 许可证

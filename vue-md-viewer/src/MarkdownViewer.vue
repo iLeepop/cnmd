@@ -1,6 +1,4 @@
 <script setup lang="ts">
-import DOMPurify from "dompurify";
-import { marked } from "marked";
 import {
   computed,
   nextTick,
@@ -9,21 +7,31 @@ import {
   ref,
   watch,
 } from "vue";
+import codeSvgRaw from "../public/code.svg?raw";
 import contentSvgRaw from "../public/content.svg?raw";
+import editSvgRaw from "../public/edit.svg?raw";
 import folderSvgRaw from "../public/folder.svg?raw";
 import leftSvgRaw from "../public/left.svg?raw";
 import listSvgRaw from "../public/list.svg?raw";
+import { htmlToMarkdown, markdownToHtml } from "./cnmd-md-html";
+import { getFileUrl, saveMarkdown } from "./cnmd-save-file";
 import { normalizeDirPath } from "./cnmd-dir-tree";
+import CnmdTopBar from "./fragments/CnmdTopBar.vue";
 import DirectoryPanel from "./fragments/DirectoryPanel.vue";
 import MenuDropdown from "./fragments/MenuDropdown.vue";
 import OpenFilePanel from "./fragments/OpenFilePanel.vue";
 import ThemePanel from "./fragments/ThemePanel.vue";
+import { useEditorShortcuts } from "./useEditorShortcuts";
 import { watchCnmdTheme } from "./useCnmdTheme";
 
 const markdown = defineModel<string>("markdown", { required: true });
 const displayName = defineModel<string>("displayName", { required: true });
 
 const viewMode = ref<"rendered" | "source">("rendered");
+const editMode = ref(false);
+const editContentMode = ref<"visual" | "source">("visual");
+const draft = ref("");
+const lastSavedDraft = ref("");
 const menuOpen = ref(false);
 const panelOpen = ref(false);
 const themePanelOpen = ref(false);
@@ -62,11 +70,16 @@ const initialDir = getInitialDirForPanel();
 
 /** Bootstrap Icons SVG，内联进 bundle（扩展 content script 不可用外链 URL） */
 const iconList = listSvgRaw;
+const iconEdit = editSvgRaw;
+const iconCode = codeSvgRaw;
 const iconLeft = leftSvgRaw;
 const iconFolder = folderSvgRaw;
 const iconContent = contentSvgRaw;
 
 const articleRef = ref<HTMLElement | null>(null);
+const visualEditorRef = ref<HTMLElement | null>(null);
+const editorRef = ref<HTMLTextAreaElement | null>(null);
+let visualSyncTimer: ReturnType<typeof setTimeout> | undefined;
 const rootRef = ref<HTMLElement | null>(null);
 const resizerRef = ref<HTMLElement | null>(null);
 
@@ -77,23 +90,7 @@ type OutlineItem =
 const outlineItems = ref<OutlineItem[]>([]);
 const activeOutlineIndex = ref(0);
 
-function escapeHtml(s: string) {
-  return String(s)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-}
-
-const safeHtml = computed(() => {
-  try {
-    const dirty = marked.parse(markdown.value, { async: false }) as string;
-    return DOMPurify.sanitize(dirty, {
-      USE_PROFILES: { html: true },
-    });
-  } catch (e) {
-    return `<p class="cnmd-error">Markdown 解析错误：${escapeHtml(String(e))}</p>`;
-  }
-});
+const safeHtml = computed(() => markdownToHtml(markdown.value));
 
 const srcToggleLabel = computed(() =>
   viewMode.value === "source" ? "显示预览" : "显示原文"
@@ -105,7 +102,12 @@ function onScroll() {
   scrollTicking = true;
   requestAnimationFrame(() => {
     scrollTicking = false;
-    if (viewMode.value !== "rendered" || outlineItems.value.length === 0) return;
+    if (
+      viewMode.value !== "rendered" ||
+      editMode.value ||
+      outlineItems.value.length === 0
+    )
+      return;
     const margin = 100;
     let active = 0;
     const items = outlineItems.value;
@@ -133,9 +135,13 @@ function rebuildOutline() {
   outlineItems.value = [];
   activeOutlineIndex.value = 0;
   if (viewMode.value !== "rendered") return;
+  if (editMode.value && editContentMode.value === "source") return;
 
   nextTick(() => {
-    const article = articleRef.value;
+    const article =
+      editMode.value && editContentMode.value === "visual"
+        ? visualEditorRef.value
+        : articleRef.value;
     if (!article) return;
 
     const headings = article.querySelectorAll("h1, h2, h3, h4, h5, h6");
@@ -182,10 +188,118 @@ function rebuildOutline() {
 
 watch([safeHtml, viewMode], rebuildOutline, { flush: "post" });
 
+watch(markdown, (v) => {
+  if (!editMode.value) {
+    draft.value = v;
+    lastSavedDraft.value = v;
+  }
+});
+
 watch(viewMode, (v) => {
   document.body.classList.toggle("cnmd-body-source", v === "source");
   menuOpen.value = false;
+  if (v === "source") editMode.value = false;
 });
+
+function isDraftDirty(): boolean {
+  return draft.value !== lastSavedDraft.value;
+}
+
+function syncDraftFromMarkdown() {
+  draft.value = markdown.value;
+  lastSavedDraft.value = markdown.value;
+}
+
+function flushVisualToDraft() {
+  if (editContentMode.value !== "visual") return;
+  const el = visualEditorRef.value;
+  if (!el) return;
+  draft.value = htmlToMarkdown(el.innerHTML);
+}
+
+function initVisualEditor() {
+  const el = visualEditorRef.value;
+  if (!el) return;
+  el.innerHTML = markdownToHtml(draft.value);
+}
+
+function onVisualInput() {
+  if (visualSyncTimer) clearTimeout(visualSyncTimer);
+  visualSyncTimer = setTimeout(() => {
+    visualSyncTimer = undefined;
+    flushVisualToDraft();
+    rebuildOutline();
+  }, 300);
+}
+
+function toggleEditContentMode() {
+  if (editContentMode.value === "visual") {
+    flushVisualToDraft();
+    editContentMode.value = "source";
+    nextTick(() => editorRef.value?.focus());
+  } else {
+    editContentMode.value = "visual";
+    nextTick(() => {
+      initVisualEditor();
+      visualEditorRef.value?.focus();
+    });
+  }
+}
+
+const editFabTitle = computed(() =>
+  editContentMode.value === "visual" ? "切换到源代码" : "切换到渲染"
+);
+
+async function saveDocument(): Promise<void> {
+  if (!editMode.value) return;
+  if (editContentMode.value === "visual") flushVisualToDraft();
+  markdown.value = draft.value;
+  const fileUrl = getFileUrl();
+  if (!fileUrl) {
+    window.alert(
+      "当前文档不是通过本地 file:// 路径打开的，无法写回原文件。请用 Chrome 直接打开本地 .md 文件后再保存。"
+    );
+    return;
+  }
+  try {
+    await saveMarkdown(fileUrl, draft.value);
+    lastSavedDraft.value = draft.value;
+  } catch (e) {
+    window.alert(
+      `保存失败：${e instanceof Error ? e.message : String(e)}\n\n首次保存时请在文件选择器中选择正在编辑的同一个 .md 文件。`
+    );
+    throw e;
+  }
+}
+
+function enterEditMode() {
+  syncDraftFromMarkdown();
+  editContentMode.value = "visual";
+  editMode.value = true;
+  nextTick(() => {
+    initVisualEditor();
+    visualEditorRef.value?.focus();
+  });
+}
+
+function exitEditMode() {
+  if (editContentMode.value === "visual") flushVisualToDraft();
+  if (isDraftDirty()) {
+    const ok = window.confirm("有未保存的修改，确定退出编辑模式吗？");
+    if (!ok) return;
+  }
+  markdown.value = draft.value;
+  editMode.value = false;
+  editContentMode.value = "visual";
+  nextTick(() => rebuildOutline());
+}
+
+function toggleEdit() {
+  if (editMode.value) exitEditMode();
+  else enterEditMode();
+}
+
+useEditorShortcuts(editMode, saveDocument);
 
 function toggleMenu() {
   menuOpen.value = !menuOpen.value;
@@ -211,12 +325,24 @@ function closeThemePanel() {
 
 function toggleViewMode() {
   menuOpen.value = false;
+  if (editMode.value) {
+    if (editContentMode.value === "visual") flushVisualToDraft();
+    if (isDraftDirty()) {
+      const ok = window.confirm("有未保存的修改，确定切换显示模式吗？");
+      if (!ok) return;
+    }
+  }
+  editMode.value = false;
+  editContentMode.value = "visual";
   viewMode.value = viewMode.value === "source" ? "rendered" : "source";
 }
 
 function onFileLoaded(text: string, fileName: string) {
+  editMode.value = false;
   markdown.value = text;
   displayName.value = fileName;
+  draft.value = text;
+  lastSavedDraft.value = text;
   viewMode.value = "rendered";
   panelOpen.value = false;
 }
@@ -299,11 +425,14 @@ onMounted(() => {
     sidebarTab.value = "outline";
   }
 
+  syncDraftFromMarkdown();
+
   window.addEventListener("scroll", onScroll, { passive: true });
   rebuildOutline();
 });
 
 onUnmounted(() => {
+  if (visualSyncTimer) clearTimeout(visualSyncTimer);
   stopThemeWatch?.();
   window.removeEventListener("scroll", onScroll);
   document.body.classList.remove("cnmd-body-source");
@@ -312,15 +441,12 @@ onUnmounted(() => {
 
 <template>
   <template v-if="viewMode === 'source'">
-    <button
-      type="button"
-      class="cnmd-menu-button"
-      aria-label="菜单"
-      :aria-expanded="menuOpen"
-      @click="toggleMenu"
-    >
-      <span class="cnmd-menu-icon" aria-hidden="true" v-html="iconList"></span>
-    </button>
+    <CnmdTopBar
+      :edit-mode="false"
+      :icon-list="iconList"
+      :menu-open="menuOpen"
+      @toggle-menu="toggleMenu"
+    />
     <div
       v-show="menuOpen"
       id="cnmd-menu-layer"
@@ -361,15 +487,12 @@ onUnmounted(() => {
       'cnmd--resizing': resizing,
     }"
   >
-    <button
-      type="button"
-      class="cnmd-menu-button"
-      aria-label="菜单"
-      :aria-expanded="menuOpen"
-      @click="toggleMenu"
-    >
-      <span class="cnmd-menu-icon" aria-hidden="true" v-html="iconList"></span>
-    </button>
+    <CnmdTopBar
+      :edit-mode="editMode"
+      :icon-list="iconList"
+      :menu-open="menuOpen"
+      @toggle-menu="toggleMenu"
+    />
     <div
       v-show="menuOpen"
       id="cnmd-menu-layer"
@@ -498,14 +621,65 @@ onUnmounted(() => {
             v-html="iconLeft"
           ></span>
         </button>
-        <div class="cnmd-sidebar-rail-stack" id="cnmd-sidebar-rail-stack"></div>
+        <div class="cnmd-sidebar-rail-stack" id="cnmd-sidebar-rail-stack">
+          <button
+            type="button"
+            class="cnmd-sidebar-toggle-btn cnmd-rail-edit-btn"
+            :class="{ 'cnmd-rail-edit-btn--active': editMode }"
+            :aria-label="editMode ? '退出编辑' : '编辑'"
+            :aria-pressed="editMode"
+            :title="editMode ? '退出编辑' : '编辑'"
+            @click="toggleEdit"
+          >
+            <span
+              class="cnmd-sidebar-toggle-icon cnmd-rail-edit-icon"
+              aria-hidden="true"
+              v-html="iconEdit"
+            ></span>
+          </button>
+        </div>
+      </div>
+      <div v-if="editMode" class="cnmd-edit-pane" id="cnmd-edit-pane">
+        <article
+          v-show="editContentMode === 'visual'"
+          ref="visualEditorRef"
+          class="cnmd-preview cnmd-prose cnmd-preview--editable"
+          id="cnmd-visual-editor"
+          contenteditable="true"
+          spellcheck="false"
+          aria-label="Markdown 渲染编辑"
+          @input="onVisualInput"
+        ></article>
+        <textarea
+          v-show="editContentMode === 'source'"
+          ref="editorRef"
+          v-model="draft"
+          class="cnmd-editor"
+          id="cnmd-editor"
+          aria-label="Markdown 源代码编辑器"
+          spellcheck="false"
+        ></textarea>
       </div>
       <article
+        v-else
         ref="articleRef"
         class="cnmd-preview cnmd-prose"
         id="cnmd-article"
         v-html="safeHtml"
       ></article>
     </div>
+    <Teleport to="body">
+      <button
+        v-if="editMode"
+        type="button"
+        class="cnmd-edit-mode-fab"
+        :class="{ 'cnmd-edit-mode-fab--source': editContentMode === 'source' }"
+        :title="editFabTitle"
+        :aria-label="editFabTitle"
+        @click="toggleEditContentMode"
+      >
+        <span class="cnmd-menu-icon" aria-hidden="true" v-html="iconCode"></span>
+      </button>
+    </Teleport>
   </div>
 </template>
